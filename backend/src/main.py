@@ -1,12 +1,11 @@
 from fastapi import FastAPI
-from .api.v1 import connections, sync
+from backend.src.api.v1.connections import router as connection_router
 
-app = FastAPI(title="Data Sync Platform", version="1.0.0")
+app = FastAPI(title="Data Sync Platform")
 
-# routers
-# app.include_router(connections.router, prefix="/api/v1/connections", tags=["Connections"])
-# app.include_router(sync.router, prefix="/api/v1/sync", tags=["Sync"])
+# Register routes
+app.include_router(connection_router)
 
-@app.get("/ping")
-def ping():
-    return {"status": "ok", "message": "FastAPI Working ✅"}
+@app.get("/")
+def root():
+    return {"message": "Data Sync Platform Running ✅"}

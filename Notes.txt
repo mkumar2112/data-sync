@@ -3,6 +3,20 @@
 
     Run :- uvicorn backend.src.main:app --reload
 
+    initialize Alembic:
+        python -m alembic init alembic
+    
+    autogenerate migrations
+        python -m alembic revision --autogenerate -m "main_db models"
+
+    Apply migration:
+        python -m alembic upgrade head
+
+
+
+
+
+
 2. Install Next Js for UI 
     npx create-next-app@latest frontend
 
