@@ -1,8 +1,10 @@
-from ..data_hub.mysql.db_connection import connectsql as mysql_connectsql
-from ..data_hub.postgres.db_connection import connectsql as postgres_connectsql
-from ..data_hub.mongo.db_connection import connectsql as mongo_connectsql
+from ..data_hub.mysql.db_connection import connectsql as mysql_connectsql, tableoperation as  mysql_tableoperation 
+from ..data_hub.postgres.db_connection import connectsql as postgres_connectsql, tableoperation as  postgres_tableoperation
+from ..data_hub.mongo.db_connection import connectsql as mongo_connectsql, tableoperation as  mongo_tableoperation
 from ..core.config import available_db_in_nosql, available_db_in_sql
-
+import datetime
+import decimal
+from bson import ObjectId
 
 
 
@@ -98,5 +100,82 @@ class DBClientLoader:
         except Exception as e:
             return {'message': f'An error occured in check db connection: {str(e)}'}
     
+    def get_client_db(db_type, **kwarg):
+        try:
+            client = DBClientLoader.get_client(db_type=db_type)
+            wrong_credentials = DBClientLoader.validate_credentials(db_type=db_type, **kwarg)
+            if wrong_credentials:
+                return False, wrong_credentials
+            
+            params = DBClientLoader.make_valid_params(db_type=db_type, **kwarg)
+            db_connnection = client.setup_connection(**params)
+            if not db_connnection:
+                return False, 'Wrong Credentials'
+            
+            is_connect, msg = client.connectdb(db_name=kwarg.get('database'))
+            if not is_connect:
+                return False , msg
+            return client, client
+        except Exception as e:
+            return False , str(e)
+
+
+class Table_Operation:
+    def __init__(self, db_type, db_name, client):
+        self.client = client
+        self.db_type = db_type
+        self.db_name = db_name
+        self.tableoperation = self.get_tableoperation(db_type=db_type)
+    
+    def get_tableoperation(self, db_type):
+        if db_type == "mysql":
+            return mysql_tableoperation(self.client.conn, self.db_name)
+        if db_type == "postgres":
+            return postgres_tableoperation(self.client.conn, self.db_name)
+        if db_type == "mongo":
+            return mongo_tableoperation(self.client.conn, self.db_name)
+        raise Exception("Invalid or unsupported DB type")
+    
+
+    def get_table_metadata(self, table_name):
+        try:
+            table_operation_obj = self.tableoperation
+            columns_and_constraints = table_operation_obj.get_table_metadata(table_name=table_name)
+            return columns_and_constraints
+        except Exception as e:
+            return 
+
+
+def make_json_serializable(data):
+    # If dict → process each key/value
+    if isinstance(data, dict):
+        return {k: make_json_serializable(v) for k, v in data.items()}
+
+    # If list/tuple/set → convert to list and process each item
+    elif isinstance(data, (list, tuple, set)):
+        return [make_json_serializable(v) for v in data]
+
+    # MongoDB ObjectId
+    elif isinstance(data, ObjectId):
+        return str(data)
+
+    # datetime/date
+    elif isinstance(data, (datetime.datetime, datetime.date)):
+        return data.isoformat()
+
+    # Decimal → float
+    elif isinstance(data, decimal.Decimal):
+        return float(data)
+
+    # bytes → decode
+    elif isinstance(data, bytes):
+        try:
+            return data.decode()
+        except:
+            return str(data)
+
+    # Everything else → return as is (int, float, bool, str, None)
+    else:
+        return data
 
     

@@ -46,6 +46,123 @@ class connectsql:
         except Exception as e:
             return False, str(e)
 
+    def get_postgres_version(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT version()")
+            version = cursor.fetchone()[0]
+            return True, version
+        except Exception as e:
+            return False, str(e)
+
+    def get_server_status(self):
+        try:
+            cursor = self.conn.cursor()
+
+            # Background writer stats
+            cursor.execute("SELECT * FROM pg_stat_bgwriter")
+            row = cursor.fetchone()
+            cols = [d[0] for d in cursor.description]
+            bgwriter = dict(zip(cols, row))
+
+            # All database stats
+            cursor.execute("SELECT * FROM pg_stat_database")
+            rows = cursor.fetchall()
+            cols = [d[0] for d in cursor.description]
+            databases = [dict(zip(cols, r)) for r in rows]
+
+            return True, {
+                "bgwriter": bgwriter,
+                "databases": databases
+            }
+
+        except Exception as e:
+            return False, str(e)
+    
+    def get_global_variables(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT name, setting FROM pg_settings")
+            variables = cursor.fetchall()
+            return True, {k: v for k, v in variables}
+        except Exception as e:
+            return False, str(e)
+    
+    def get_storage_engines(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT name, default_version, installed_version FROM pg_available_extensions")
+            rows = cursor.fetchall()
+
+            engines = []
+            for r in rows:
+                engines.append({
+                    "name": r[0],
+                    "default_version": r[1],
+                    "installed_version": r[2]
+                })
+
+            return True, engines
+
+        except Exception as e:
+            return False, str(e)
+    
+    def get_database_metadata(self, db_name):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    datname,
+                    pg_encoding_to_char(encoding),
+                    datcollate,
+                    datctype
+                FROM pg_database
+                WHERE datname = %s
+            """, (db_name,))
+
+            row = cursor.fetchone()
+            if not row:
+                return False, "Database not found."
+
+            return True, {
+                "schema": row[0],
+                "encoding": row[1],
+                "collation": row[2],
+                "ctype": row[3]
+            }
+
+        except Exception as e:
+            return False, str(e)
+    
+    def get_all_metadata(self, db_name):
+        try:
+            meta = {}
+
+            # 1. Version
+            status, version = self.get_postgres_version()
+            meta["version"] = version if status else f"Error: {version}"
+
+            # 2. Server Status
+            status, status_data = self.get_server_status()
+            meta["server_status"] = status_data if status else f"Error: {status_data}"
+
+            # 3. Variables
+            status, vars_data = self.get_global_variables()
+            meta["global_variables"] = vars_data if status else f"Error: {vars_data}"
+
+            # 4. Storage Engines (extensions)
+            status, engines_data = self.get_storage_engines()
+            meta["storage_engines"] = engines_data if status else f"Error: {engines_data}"
+
+            # 5. Database metadata
+            status, db_data = self.get_database_metadata(db_name)
+            meta["database"] = db_data if status else f"Error: {db_data}"
+
+            return True, meta
+
+        except Exception as e:
+            return False, str(e)
+
     def db_exists(self, db_name):
         try:
             cursor = self.conn.cursor()
@@ -105,9 +222,148 @@ class connectsql:
             print(f"Error closing connection: {e}")
 
                 
-# class tableoperation:
-#     def __init__(self, conn):
-#         self.conn = conn
+class tableoperation:
+    def __init__(self, conn, db_name):
+        self.conn = conn
+        self.db_name = db_name
+
+    def get_table_metadata(self, table_name):
+        try:
+            cursor = self.conn.cursor()
+
+            metadata_query = """
+            SELECT
+                n.nspname AS schema_name,
+                c.relkind AS table_type,
+                c.reltuples::BIGINT AS row_count,
+                pg_total_relation_size(c.oid) AS total_size,
+                pg_relation_size(c.oid) AS data_size,
+                pg_indexes_size(c.oid) AS index_size,
+                c.reloptions
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relname = %s;
+            """
+
+            cursor.execute(metadata_query, (table_name,))
+            row = cursor.fetchone()
+            cursor.close()
+
+            if not row:
+                return None
+
+            # Table type mapping
+            table_type_map = {
+                "r": "table",
+                "v": "view",
+                "m": "materialized_view",
+                "f": "foreign_table"
+            }
+            columns_constraints = self.get_columns_and_constraints(table_name=table_name)
+
+            return {
+                "schema": row[0],
+                "engine": None,  # ✅ PostgreSQL has no engine per table
+                "row_count": int(row[2]),
+                "data_size": row[4],
+                "index_size": row[5],
+                "table_type": table_type_map.get(row[1], "unknown"),
+                "options": row[6],
+                **columns_constraints
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+
+    def get_columns_and_constraints(self, table_name):
+        try:
+            cursor = self.conn.cursor()
+
+            # ✅ 1. Auto-detect table schema
+            schema_query = """
+            SELECT table_schema
+            FROM information_schema.tables
+            WHERE table_name = %s
+            LIMIT 1;
+            """
+            cursor.execute(schema_query, (table_name,))
+            schema_result = cursor.fetchone()
+
+            if not schema_result:
+                return {"error": f"Table '{table_name}' not found in any schema"}
+
+            table_schema = schema_result[0]  # ✅ dynamic schema
+
+            # ✅ 2. Get Column Info
+            column_query = """
+            SELECT 
+                column_name,
+                data_type,
+                is_nullable,
+                column_default
+            FROM information_schema.columns
+            WHERE table_schema = %s
+            AND table_name = %s;
+            """
+
+            cursor.execute(column_query, (table_schema, table_name))
+            columns = cursor.fetchall()
+
+            formatted_columns = [
+                {
+                    "column_name": row[0],
+                    "data_type": row[1],
+                    "is_nullable": row[2],
+                    "default": row[3],
+                }
+                for row in columns
+            ]
+
+            # ✅ 3. Get Constraints (PK, FK, UNIQUE)
+            constraint_query = """
+            SELECT
+                tc.constraint_name,
+                tc.constraint_type,
+                kcu.column_name,
+                ccu.table_name AS referenced_table,
+                ccu.column_name AS referenced_column
+            FROM information_schema.table_constraints tc
+            LEFT JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            LEFT JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                AND tc.table_schema = ccu.table_schema
+            WHERE tc.table_schema = %s
+            AND tc.table_name = %s;
+            """
+
+            cursor.execute(constraint_query, (table_schema, table_name))
+            constraints = cursor.fetchall()
+
+            formatted_constraints = [
+                {
+                    "constraint_name": row[0],
+                    "constraint_type": row[1],
+                    "column_name": row[2],
+                    "referenced_table": row[3],
+                    "referenced_column": row[4],
+                }
+                for row in constraints
+            ]
+
+            cursor.close()
+
+            return {
+                "schema": table_schema,   # ✅ helpful for debugging
+                "columns": formatted_columns,
+                "constraints": formatted_constraints
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
 #     def gettableData(self, db_type, db_name, table_name):
 #         """
 #         Fetches all data from the specified table in the given database.

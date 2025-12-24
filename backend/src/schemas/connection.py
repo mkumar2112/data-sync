@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, root_validator, model_validator
 from typing import Optional, Any, Dict
 from datetime import datetime
-
+from uuid import UUID
 
 class DatabaseConnectionBase(BaseModel):
     name: str
@@ -17,6 +17,8 @@ class DatabaseConnectionBase(BaseModel):
     auto_sync: Optional[bool] = False
     sync_frequency: Optional[str]
 
+
+    
 
 class DatabaseConnectionCreate(DatabaseConnectionBase):
     pass
@@ -37,6 +39,7 @@ class DatabaseConnectionUpdate(BaseModel):
 
 class DatabaseConnectionOut(BaseModel):
     id: int
+    uuid: UUID
     name: str
     db_type: str
     host: Optional[str]
@@ -46,8 +49,12 @@ class DatabaseConnectionOut(BaseModel):
     connection_status: Optional[str]
     last_connected_at: Optional[datetime]
 
-    class Config:
-        orm_mode = True
+    # class Config:
+    #     orm_mode = True
+
+    model_config = {
+        "from_attributes": True  
+    }
 
 
 
@@ -77,7 +84,7 @@ class DatabaseTableBase(BaseModel):
     connection_id: int
     name: str
     table_type: Optional[str]
-    schema: Optional[str]
+    # schema: Optional[str]
     engine: Optional[str]
     row_count: Optional[int]
     data_size: Optional[int]
@@ -103,7 +110,7 @@ class DatabaseTableHistoryBase(BaseModel):
     connection_id: int
     name: str
     table_type: Optional[str]
-    schema: Optional[str]
+    # schema: Optional[str]
     is_schema_changed: Optional[bool]
     engine: Optional[str]
     row_count: Optional[int]

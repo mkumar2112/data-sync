@@ -1,13 +1,227 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON, Boolean, BigInteger, ForeignKey
+from sqlalchemy import UniqueConstraint
 from datetime import datetime
 from ..base import Base
 from sqlalchemy.orm import relationship
+import uuid
+from sqlalchemy.dialects.postgresql import UUID
 
+class ReplicaDatabaseConnection(Base):
+    __tablename__ = "replica_database_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False)
+
+    # Basic
+    name = Column(String(150), nullable=False)
+    db_type = Column(String(50), nullable=False)
+
+    # Connection config
+    connection_uri = Column(Text, nullable=True)
+    host = Column(String(255), nullable=True)
+    port = Column(Integer, nullable=True)
+    username = Column(String(150), nullable=True)
+    password = Column(String(255), nullable=True)
+    database_name = Column(String(150), nullable=True)
+
+    # Flexible JSON config
+    config = Column(JSON, nullable=True)
+    db_metadata = Column(JSON, nullable=True)
+
+    # Status / Health
+    connection_status = Column(String(50), default="unknown")
+    last_connected_at = Column(DateTime)
+    last_error = Column(Text)
+
+    # Sync
+    auto_sync = Column(Boolean, default=False)
+    sync_frequency = Column(String(30), nullable=True)
+    last_sync_at = Column(DateTime)
+    next_sync_at = Column(DateTime)
+
+    # Logs & usage
+    created_by = Column(String(100), nullable=True)
+    updated_by = Column(String(100), nullable=True)
+    last_used_at = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            'db_type', 'database_name', 'host', 'port',
+            name='uq_replica_db_connection'
+        ),
+    )
+
+class ReplicaDatabaseHistory(Base):
+    __tablename__ = "replica_database_history"
+
+    id = Column(Integer, primary_key=True)
+
+    # FK to replica connection
+    connection_id = Column(
+        Integer,
+        ForeignKey("replica_database_connections.id", ondelete="CASCADE"),
+        index=True
+    )
+
+    sync_id = Column(String(100), nullable=False)
+
+    # Snapshot metadata
+    db_metadata = Column(JSON, nullable=False)
+    db_size_mb = Column(Float, nullable=True)
+
+    engine = Column(String(100), nullable=True)
+    version = Column(String(100), nullable=True)
+    stats = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    connection = relationship("ReplicaDatabaseConnection", backref="history")
+
+class ReplicaDatabaseTable(Base):
+    __tablename__ = "replica_database_tables"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # FK to connection
+    connection_id = Column(
+        Integer,
+        ForeignKey("replica_database_connections.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    name = Column(String(255), nullable=False)
+    table_type = Column(String(50), nullable=True)
+
+    schema = Column(String(255), nullable=True)
+    engine = Column(String(255), nullable=True)
+
+    row_count = Column(Integer, nullable=True)
+    data_size = Column(BigInteger, nullable=True)
+    index_size = Column(BigInteger, nullable=True)
+
+    options = Column(JSON, nullable=True)
+
+    last_synced_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ReplicaDatabaseTableHistory(Base):
+    __tablename__ = "replica_database_table_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # FKs
+    table_id = Column(
+        Integer,
+        ForeignKey("replica_database_tables.id", ondelete="CASCADE"),
+        nullable=False
+    )
+    connection_id = Column(
+        Integer,
+        ForeignKey("replica_database_connections.id", ondelete="CASCADE"),
+        nullable=False
+    )
+
+    # Snapshot data
+    name = Column(String(255), nullable=False)
+    table_type = Column(String(50), nullable=True)
+    schema = Column(String(255), nullable=True)
+    is_schema_changed = Column(Boolean, nullable=True)
+
+    engine = Column(String(255), nullable=True)
+    row_count = Column(Integer, nullable=True)
+    data_size = Column(BigInteger, nullable=True)
+    index_size = Column(BigInteger, nullable=True)
+
+    options = Column(JSON, nullable=True)
+
+    sync_id = Column(String(100), nullable=True)
+
+    snapshot_at = Column(DateTime, default=datetime.utcnow)
+
+class ReplicaDatabaseColumn(Base):
+    __tablename__ = "replica_database_columns"
+
+    id = Column(Integer, primary_key=True)
+
+    # FKs
+    connection_id = Column(
+        Integer,
+        ForeignKey("replica_database_connections.id", ondelete="CASCADE")
+    )
+    table_id = Column(
+        Integer,
+        ForeignKey("replica_database_tables.id", ondelete="CASCADE")
+    )
+
+    table_name = Column(String(200), nullable=False)
+    column_name = Column(String(200), nullable=False)
+
+    data_type = Column(String(200))
+    is_nullable = Column(Boolean)
+    is_primary_key = Column(Boolean)
+    is_unique = Column(Boolean)
+    default_value = Column(String(500))
+
+    length = Column(Integer)
+    precision = Column(Integer)
+    scale = Column(Integer)
+
+    foreign_key = Column(JSON)
+    constraints = Column(JSON)
+
+    metadata_json = Column(JSON, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ReplicaDatabaseColumnHistory(Base):
+    __tablename__ = "replica_column_history"
+
+    id = Column(Integer, primary_key=True)
+
+    # FKs
+    connection_id = Column(
+        Integer,
+        ForeignKey("replica_database_connections.id", ondelete="CASCADE")
+    )
+    table_history_id = Column(
+        Integer,
+        ForeignKey("replica_database_table_history.id", ondelete="CASCADE")
+    )
+    column_id = Column(
+        Integer,
+        ForeignKey("replica_database_columns.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
+    sync_id = Column(String(100), nullable=False)
+
+    table_name = Column(String(200), nullable=False)
+    column_name = Column(String(200), nullable=False)
+
+    data_type = Column(String(200))
+    is_nullable = Column(Boolean)
+    is_primary_key = Column(Boolean)
+    is_unique = Column(Boolean)
+    default_value = Column(String(500))
+
+    length = Column(Integer)
+    precision = Column(Integer)
+    scale = Column(Integer)
+
+    foreign_key = Column(JSON)
+    constraints = Column(JSON)
+
+    column_metadata = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class DatabaseConnection(Base):
     __tablename__ = "database_connections"
 
     id = Column(Integer, primary_key=True, index=True)
+    uuid = Column( UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False)
 
     # Basic
     name = Column(String(150), nullable=False)
@@ -49,6 +263,12 @@ class DatabaseConnection(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    __table_args__ = (
+        UniqueConstraint(
+            'db_type', 'database_name', 'host', 'port',
+            name='uq_db_connection'
+        ),
+    )
 
 class DatabaseHistory(Base):
     __tablename__ = "database_history"
@@ -79,7 +299,6 @@ class DatabaseHistory(Base):
 
     # Relationship
     connection = relationship("DatabaseConnection", backref="db_history")
-
 
 class DatabaseTable(Base):
     __tablename__ = "database_tables"
@@ -113,7 +332,6 @@ class DatabaseTable(Base):
     # Last updated automatically
     last_synced_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
-
 
 class DatabaseTableHistory(Base):
     __tablename__ = "database_table_history"
@@ -174,7 +392,6 @@ class DatabaseColumn(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-
 class DatabaseColumnHistory(Base):
     __tablename__ = "column_history"
 
@@ -202,7 +419,6 @@ class DatabaseColumnHistory(Base):
 
     column_metadata = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-
 
 
 class AuditLog(Base):

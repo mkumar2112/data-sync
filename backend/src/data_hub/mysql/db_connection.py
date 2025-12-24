@@ -42,6 +42,115 @@ class connectsql:
             return False, f"Failed to connect database {db_name}: Database not exist..."
         except Exception as e:
             return False, str(e)
+        
+    def get_mysql_version(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT VERSION()")
+            version = cursor.fetchone()[0]
+            return True, version
+        except Exception as e:
+            return False, str(e)
+
+    def get_server_status(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SHOW STATUS")
+            status = cursor.fetchall()  # list of (Variable_name, Value)
+            return True, status
+        except Exception as e:
+            return False, str(e)
+        
+    def get_global_variables(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SHOW VARIABLES")
+            variables = cursor.fetchall()  # list of (Variable_name, Value)
+            return True, variables
+        except Exception as e:
+            return False, str(e)
+
+    def get_storage_engines(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SHOW ENGINES")
+            engines = cursor.fetchall()
+            return True, engines
+        except Exception as e:
+            return False, str(e)
+
+    def get_database_metadata(self, db_name):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    SCHEMA_NAME,
+                    DEFAULT_CHARACTER_SET_NAME,
+                    DEFAULT_COLLATION_NAME,
+                    SQL_PATH
+                FROM INFORMATION_SCHEMA.SCHEMATA
+                WHERE SCHEMA_NAME = %s
+            """, (db_name,))
+
+            result = cursor.fetchone()
+            return True, result
+        except Exception as e:
+            return False, str(e)
+
+    def get_all_metadata(self, db_name):
+        try:
+            all_meta = {}
+
+            # 1. MySQL Version
+            status, version = self.get_mysql_version()
+            all_meta["version"] = version if status else f"Error: {version}"
+
+            # 2. Server Status
+            status, server_status = self.get_server_status()
+            all_meta["server_status"] = (
+                {k: v for k, v in server_status} if status else f"Error: {server_status}"
+            )
+
+            # 3. Global Variables
+            status, variables = self.get_global_variables()
+            all_meta["global_variables"] = (
+                {k: v for k, v in variables} if status else f"Error: {variables}"
+            )
+
+            # 4. Storage Engines
+            status, engines = self.get_storage_engines()
+            if status:
+                all_meta["storage_engines"] = [
+                    {
+                        "Engine": row[0],
+                        "Support": row[1],
+                        "Comment": row[2],
+                        "Transactions": row[3],
+                        "XA": row[4],
+                        "Savepoints": row[5],
+                    }
+                    for row in engines
+                ]
+            else:
+                all_meta["storage_engines"] = f"Error: {engines}"
+
+            # 5. Database Metadata
+            status, db_meta = self.get_database_metadata(db_name)
+            if status and db_meta:
+                all_meta["database"] = {
+                    "schema": db_meta[0],
+                    "charset": db_meta[1],
+                    "collation": db_meta[2],
+                    "sql_path": db_meta[3]
+                }
+            else:
+                all_meta["database"] = f"Error: {db_meta}"
+
+            return True, all_meta
+
+        except Exception as e:
+            return False, str(e)
+
 
     def db_exists(self, db_name):
         try:
@@ -61,7 +170,6 @@ class connectsql:
             return tables_list
         except Exception as e:
             return False
-
     
     def create_db(self, db_name):
         try:
@@ -94,10 +202,128 @@ class connectsql:
 
 
 
-# class tableoperation:
-#     def __init__(self, conn):
-#         self.conn = conn
+class tableoperation:
+    def __init__(self, conn, db_name):
+        self.conn = conn
+        self.db_name = db_name
+    
+    def get_table_metadata(self, table_name):
+        try:
+            cursor = self.conn.cursor()
 
+            metadata_query = """
+            SELECT 
+                TABLE_SCHEMA,
+                ENGINE,
+                TABLE_ROWS,
+                DATA_LENGTH,
+                INDEX_LENGTH,
+                TABLE_TYPE,
+                CREATE_TIME,
+                UPDATE_TIME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = %s;
+            """
+
+            cursor.execute(metadata_query, (table_name,))
+            row = cursor.fetchone()
+            cursor.close()
+
+            if not row:
+                return None
+            columns_constraints = self.get_columns_and_constraints(table_name=table_name)
+            return {
+                "schema": row[0],                  # public / dbo equivalent
+                "engine": row[1],                  # InnoDB, MyISAM
+                "row_count": row[2],               # Approx rows
+                "data_size": row[3],               # In bytes
+                "index_size": row[4],              # In bytes
+                "table_type": row[5],              # BASE TABLE / VIEW
+                "options": {
+                    "created_at": str(row[6]) if row[6] else None,
+                    "updated_at": str(row[7]) if row[7] else None
+                }, **columns_constraints
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+
+    def get_columns_and_constraints(self, table_name):
+        try:
+            cursor = self.conn.cursor()  # ✅ don't use dictionary for portability
+
+            # ✅ 1. Get Column Info
+            column_query = """
+            SELECT 
+                COLUMN_NAME,
+                DATA_TYPE,
+                IS_NULLABLE,
+                COLUMN_DEFAULT,
+                COLUMN_KEY,
+                EXTRA
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = %s;
+            """
+
+            cursor.execute(column_query, (table_name,))
+            columns = cursor.fetchall()
+
+            formatted_columns = [
+                {
+                    "column_name": row[0],
+                    "data_type": row[1],
+                    "is_nullable": row[2],
+                    "default": row[3],
+                    "column_key": row[4],
+                    "extra": row[5],
+                }
+                for row in columns
+            ]
+
+            # ✅ 2. Get Constraints (PK, FK, UNIQUE)
+            constraint_query = """
+            SELECT 
+                tc.CONSTRAINT_NAME,
+                tc.CONSTRAINT_TYPE,
+                kcu.COLUMN_NAME,
+                kcu.REFERENCED_TABLE_NAME,
+                kcu.REFERENCED_COLUMN_NAME
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+            WHERE tc.TABLE_SCHEMA = DATABASE()
+            AND tc.TABLE_NAME = %s;
+            """
+
+            cursor.execute(constraint_query, (table_name,))
+            constraints = cursor.fetchall()
+
+            formatted_constraints = [
+                {
+                    "constraint_name": row[0],
+                    "constraint_type": row[1],   # PRIMARY KEY, FOREIGN KEY, UNIQUE
+                    "column_name": row[2],
+                    "referenced_table": row[3],
+                    "referenced_column": row[4],
+                }
+                for row in constraints
+            ]
+
+            cursor.close()
+
+            return {
+                "columns": formatted_columns,
+                "constraints": formatted_constraints
+            }
+
+        except Exception as e:
+            return {"error": str(e)}
+
+        
 #     def gettableData(self, table_name):
 #         try:
 #             table_name = escape_name(table_name)
