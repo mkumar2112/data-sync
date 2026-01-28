@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from backend.src.api.v1.connections import ConnectionRouter as v1_ConnectionRouter, DB_ConnectionRouter
-from backend.src.api.v1.sync import Database_Operations as v1_Database_operations
+from backend.src.api.v1.sync import Database_Operations as v1_Database_operations, DQL_operations as v1_DQL_operations, ETL_operations as v1_ETL_operations
 from .core.status import DBStatus, APIStatus
 
 app = FastAPI(title="Data Sync Platform")
@@ -14,6 +14,12 @@ app.include_router(db_connection_router.router)
 
 v1_databaseOperation = v1_Database_operations()
 app.include_router(v1_databaseOperation.router)
+
+v1_dqlOperation = v1_DQL_operations()
+app.include_router(v1_dqlOperation.router)
+
+v1_etlOperation = v1_ETL_operations()
+app.include_router(v1_etlOperation.router)
 
 @app.on_event("startup")
 async def startup_event():

@@ -1,11 +1,4 @@
-from ..data_hub.mysql.db_connection import connectsql as mysql_connectsql, tableoperation as  mysql_tableoperation 
-from ..data_hub.postgres.db_connection import connectsql as postgres_connectsql, tableoperation as  postgres_tableoperation
-from ..data_hub.mongo.db_connection import connectsql as mongo_connectsql, tableoperation as  mongo_tableoperation
-from ..core.config import available_db_in_nosql, available_db_in_sql
-import datetime
-import decimal
-from bson import ObjectId
-
+from .imports_files import *
 
 
 class DBClientLoader:
@@ -105,6 +98,7 @@ class DBClientLoader:
             client = DBClientLoader.get_client(db_type=db_type)
             wrong_credentials = DBClientLoader.validate_credentials(db_type=db_type, **kwarg)
             if wrong_credentials:
+                print('wrong Credentials ', wrong_credentials)
                 return False, wrong_credentials
             
             params = DBClientLoader.make_valid_params(db_type=db_type, **kwarg)
@@ -114,10 +108,20 @@ class DBClientLoader:
             
             is_connect, msg = client.connectdb(db_name=kwarg.get('database'))
             if not is_connect:
+                
                 return False , msg
             return client, client
         except Exception as e:
             return False , str(e)
+        
+    def setup_connection(db_type, **kwarg):
+        client = DBClientLoader.get_client(db_type=db_type)
+        params = DBClientLoader.make_valid_params(db_type=db_type, **kwarg)
+        db_connnection = client.setup_connection(**params)
+        if not db_connnection:
+            return False, 'Wrong Credentials'
+        return client, client
+
 
 
 class Table_Operation:
@@ -179,3 +183,108 @@ def make_json_serializable(data):
         return data
 
     
+class ddl_operation:
+    def __init__(self, db_type, db_name, client):
+        self.client = client
+        self.db_type = db_type
+        self.db_name = db_name
+        self.get_ddl = self.get_ddl(db_type=db_type)
+    
+    def get_ddl(self, db_type):
+        if db_type == "mysql":
+            return mysql_ddl(self.client.conn, self.db_name)
+        if db_type == "postgres":
+            return postgres_ddl(self.client.conn, self.db_name)
+        if db_type == "mongo":
+            return mongo_ddl(self.client.conn, self.db_name)
+        raise Exception("Invalid or unsupported DB type")
+    
+    def create_database(self, db_name):
+        try:
+            ddl_obj = self.get_ddl
+            created_columns = ddl_obj.create_database(db_name = db_name)
+            return created_columns
+        except Exception as e:
+            return 
+    
+
+    def create_table(self, table_name, columns):
+        try:
+            ddl_obj = self.get_ddl
+            created_columns = ddl_obj.create_table( table_name= table_name, columns = columns)
+            return created_columns
+        except Exception as e:
+            print(e)
+            return 
+
+    def create_constraints(self, table_name, constraints):
+        try:
+            ddl_obj = self.get_ddl
+            # print(constraints)
+            created_constraints = ddl_obj.add_table_constraints( table_name= table_name, constraints = constraints)
+            return created_constraints
+        except Exception as e:
+            
+            return 
+
+class dql_operation:
+    def __init__(self, db_type, db_name, client):
+        self.client = client
+        self.db_type = db_type
+        self.db_name = db_name
+        self.get_dql = self.get_dql(db_type=db_type)
+    
+    def get_dql(self, db_type):
+        if db_type == "mysql":
+            return mysql_dql(self.client.conn, self.db_name)
+        if db_type == "postgres":
+            return postgres_dql(self.client.conn, self.db_name)
+        if db_type == "mongo":
+            return mongo_dql(self.client.conn, self.db_name)
+        raise Exception("Invalid or unsupported DB type")
+    
+    def get_all_data(self, table_name):
+        try:
+            return make_json_serializable(self.get_dql.extract_data(table_name=table_name))
+        except Exception as e:
+            return False , str(e)
+
+
+
+class dml_operation:
+    def __init__(self, db_type, db_name, client):
+        self.client = client
+        self.db_type = db_type
+        self.db_name = db_name
+        self.dml_opr = self.get_dml(db_type=db_type)
+    
+    def get_dml(self, db_type):
+        if db_type == "mysql":
+            return mysql_dml(self.client.conn, self.db_name)
+        if db_type == "postgres":
+            return postgres_dml(self.client.conn, self.db_name)
+        if db_type == "mongo":
+            return mongo_dml(self.client.conn, self.db_name)
+        raise Exception("Invalid or unsupported DB type")
+    
+    def load_data(self, table_name, df):
+        try:
+            return self.dml_opr.load_data(table_name=table_name, df=df)
+        except Exception as e:
+            return str(e)
+        
+    # def get_all_data(self, table_name):
+    #     try:
+    #         return make_json_serializable(self.get_dml.extract_data(table_name=table_name))
+    #     except Exception as e:
+    #         return False , str(e)
+
+
+
+
+
+
+
+
+
+

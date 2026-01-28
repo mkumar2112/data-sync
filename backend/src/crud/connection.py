@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 from backend.src.db.models.connection import DatabaseConnection
 from backend.src.schemas.connection import DatabaseConnectionCreate
 from pydantic import BaseModel
+from sqlalchemy.inspection import inspect
 
 
 def create_connection(db: Session, data: DatabaseConnectionCreate):
@@ -52,7 +53,6 @@ class CRUDBase:
 
         return obj
 
-    
     def filter(self, db: Session, page: int = 1, per_page: int = 10, **filters):
         query = db.query(self.model)
 
@@ -92,7 +92,6 @@ class CRUDBase:
             "items": items
         }
 
-
     def get_all(self, db: Session, schema: BaseModel = None):
         """
         Fetch all records. 
@@ -106,8 +105,15 @@ class CRUDBase:
         return records
 
     def update(self, db: Session, db_obj, obj_in):
-        for key, value in obj_in.dict().items():
+        if isinstance(obj_in, dict):
+            update_data = obj_in
+        else:
+            update_data = obj_in.dict(exclude_unset=True)
+
+        for key, value in update_data.items():
             setattr(db_obj, key, value)
+
+        db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
         return db_obj
@@ -119,5 +125,25 @@ class CRUDBase:
             db.commit()
         return obj
 
+    def instance_to_dict(self, obj):
+        """
+        Convert dict / Pydantic / SQLAlchemy ORM → dict
+        """
+        # Already a dict
+        if isinstance(obj, dict):
+            return obj
 
-# connection_crud = CRUDBase(DatabaseConnection)
+        # Pydantic v2
+        if isinstance(obj, BaseModel):
+            return obj.model_dump(exclude_unset=True)
+
+        # SQLAlchemy ORM
+        if hasattr(obj, "__table__"):
+            return {
+                c.key: getattr(obj, c.key)
+                for c in inspect(obj).mapper.column_attrs
+            }
+
+        raise ValueError("Unsupported object type for conversion to dict")
+
+

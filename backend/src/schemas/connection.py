@@ -1,5 +1,5 @@
-from pydantic import BaseModel, root_validator, model_validator
-from typing import Optional, Any, Dict
+from pydantic import BaseModel, root_validator, model_validator, ConfigDict
+from typing import Optional, Any, Dict, List
 from datetime import datetime
 from uuid import UUID
 
@@ -52,9 +52,7 @@ class DatabaseConnectionOut(BaseModel):
     # class Config:
     #     orm_mode = True
 
-    model_config = {
-        "from_attributes": True  
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 
@@ -76,8 +74,7 @@ class DatabaseHistoryOut(DatabaseHistoryBase):
     id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DatabaseTableBase(BaseModel):
@@ -91,6 +88,8 @@ class DatabaseTableBase(BaseModel):
     index_size: Optional[int]
     options: Optional[Dict[str, Any]]
 
+    model_config = ConfigDict(from_attributes=True)
+
 
 class DatabaseTableCreate(DatabaseTableBase):
     pass
@@ -101,8 +100,7 @@ class DatabaseTableOut(DatabaseTableBase):
     last_synced_at: Optional[datetime]
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DatabaseTableHistoryBase(BaseModel):
@@ -128,8 +126,7 @@ class DatabaseTableHistoryOut(DatabaseTableHistoryBase):
     id: int
     snapshot_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DatabaseColumnBase(BaseModel):
@@ -162,8 +159,7 @@ class DatabaseColumnOut(DatabaseColumnBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 
@@ -187,7 +183,6 @@ class DatabaseColumnHistoryBase(BaseModel):
     scale: Optional[int]
 
     foreign_key: Optional[Dict[str, Any]]
-    constraints: Optional[Dict[str, Any]]
     column_metadata: Dict[str, Any]
 
 
@@ -199,9 +194,44 @@ class DatabaseColumnHistoryOut(DatabaseColumnHistoryBase):
     id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
+
+
+class DatabaseConstraintHistoryBase(BaseModel):
+    connection_id: int
+    table_history_id: int
+    constraint_id: Optional[int]
+    sync_id: str
+
+    schema: Optional[str]
+    table_name: str
+
+    constraint_name: Optional[str]
+    constraint_type: Optional[str]  # PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK
+
+    columns: List[str]
+
+    referenced_table: Optional[str]
+    referenced_columns: Optional[List[str]]
+
+    on_delete: Optional[str]
+    on_update: Optional[str]
+
+    is_deferrable: Optional[bool]
+    initially_deferred: Optional[bool]
+
+    using_index: Optional[bool]
+    index_name: Optional[str]
+
+    check_expression: Optional[str]
+
+    is_enabled: Optional[bool]
+    is_validated: Optional[bool]
+
+    constraint_order: Optional[int]
+
+    constraint_metadata: Dict[str, Any]
 
 
 class AuditLogBase(BaseModel):
@@ -225,5 +255,4 @@ class AuditLogOut(AuditLogBase):
     id: int
     created_at: datetime
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)

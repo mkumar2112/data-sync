@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
-from ...core.status import APIStatus
+from ...core.status import api_response
 from backend.src.db.session import get_db
 from backend.src.schemas.connection import DatabaseConnectionCreate, DatabaseConnectionOut
 from backend.src.services.v1.connection_manager import connection_manager , ConnectionService, Database_Operation
@@ -18,9 +18,11 @@ class ConnectionRouter:
         self.router.post("/", response_model=DatabaseConnectionOut)(self.create_db_connection)
         self.router.get("/", response_model=list[DatabaseConnectionOut])(self.get_all_db_connections)
 
+    # Not Working
     def create_db_connection(self, payload: DatabaseConnectionCreate, db: Session = Depends(get_db)):
         return connection_manager.add_connection(db, payload)
-
+    
+    # Not Working
     def get_all_db_connections(self, db: Session = Depends(get_db)):
         return connection_manager.list_connections(db)
 
@@ -38,6 +40,7 @@ class DB_ConnectionRouter:
         self.router.post("/connect")(self.connect_db)
         self.router.post("/register")(self.register_db)
         self.router.get("/list_all_db")(self.list_all_db)
+        self.router.get("/delete_db")(self.delete_db)
         # self.router.get("/", response_model=list[DatabaseConnectionOut])(self.get_all_db_connections)
 
     async def check_db_connection(self, request:Request):
@@ -47,7 +50,9 @@ class DB_ConnectionRouter:
             response = await connection_service.validate_connection(json_data)
             return response
         except Exception as e:
-            return {**APIStatus.get(500).to_dict(), 'message': f'An error occured: {str(e)}'}
+            return api_response(500, message = f'An error occured: {str(e)}')
+
+            # return api_response(500, message = f'An error occured: {str(e)}')
         
     async def connect_db(self, request:Request):
         try:
@@ -56,7 +61,7 @@ class DB_ConnectionRouter:
             response = await connection_service.connect_db_client(json_data)
             return response
         except Exception as e:
-            return {**APIStatus.get(500).to_dict(), 'message': f'An error occured: {str(e)}'}
+            return api_response(500, message = f'An error occured: {str(e)}')
         
     async def register_db(self, request: Request, db: Session = Depends(get_db)):
         try:
@@ -65,7 +70,7 @@ class DB_ConnectionRouter:
             response = await connection_service.register_db_client(json_data)
             return response
         except Exception as e:
-            return {**APIStatus.get(500).to_dict(), 'message': f'An error occured: {str(e)}'}
+            return api_response(500, message = f'An error occured: {str(e)}')
         
     async def list_all_db(self, request:  Request, db: Session = Depends(get_db)):
         try:
@@ -73,7 +78,19 @@ class DB_ConnectionRouter:
             
             return db_list
         except Exception as e:
-            return {**APIStatus.get(500).to_dict(), 'message': f'An error occured: {str(e)}'}
+            return api_response(500, message = f'An error occured: {str(e)}')
+
+    
+    async def delete_db(self, request:  Request, db: Session = Depends(get_db)):
+        try:
+            uuid = request.headers.get("x-db-instance-id")
+            connection_service = ConnectionService(db=db)
+            response = await connection_service.delete_db(uuid)
+            
+            return response
+        except Exception as e:
+            return api_response(500, message = f'An error occured: {str(e)}')
+
 
 
 

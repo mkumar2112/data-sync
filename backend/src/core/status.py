@@ -1,3 +1,6 @@
+from fastapi.responses import JSONResponse
+
+
 class APIStatus:
     registry = {}
 
@@ -41,7 +44,7 @@ class APIStatus:
     def to_dict(self):
         """Return status as a dictionary"""
         return {
-            "status": self.http,
+            "status_code": self.http,
             "message": self.message,
             "color": self.color,
             "bg": self.bg
@@ -165,3 +168,19 @@ class DBStatus:
     @classmethod
     def exists(cls, **kwargs):
         return cls.get(**kwargs) is not None
+
+
+
+def api_response(status_code: int, data=None, message=None):
+        status_obj = APIStatus.get(status_code).to_dict()
+
+        if message:
+            status_obj["message"] = message
+
+        if data is not None:
+            status_obj["data"] = data
+
+        return JSONResponse(
+            status_code=status_code,
+            content=status_obj
+        )
