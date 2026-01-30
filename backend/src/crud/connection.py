@@ -56,10 +56,26 @@ class CRUDBase:
     def filter(self, db: Session, page: int = 1, per_page: int = 10, **filters):
         query = db.query(self.model)
 
+        sort_by = filters.pop('sort_by', None)
+
         # Apply dynamic filters
         for field, value in filters.items():
             if hasattr(self.model, field) and value is not None:
                 query = query.filter(getattr(self.model, field) == value)
+
+        
+        # Apply sorting if sort_by is provided
+        if sort_by:
+            desc = False
+            if sort_by.startswith("-"):
+                desc = True
+                sort_field = sort_by[1:]
+            else:
+                sort_field = sort_by
+
+            if hasattr(self.model, sort_field):
+                column = getattr(self.model, sort_field)
+                query = query.order_by(column.desc() if desc else column.asc())
 
         # If per_page = "all", return all records (no pagination)
         if str(per_page).lower() == "all":

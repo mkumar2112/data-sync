@@ -8,8 +8,8 @@ from ..mysql.v1.db_connection import dml as mysql_dml
 from ..postgres.v1.db_connection import connectsql as postgres_connectsql
 from ..postgres.v1.db_connection import  tableoperation as  postgres_tableoperation
 from ..postgres.v1.db_connection import  ddl as postgres_ddl
-from ..postgres.v1.db_connection import  ddl as postgres_dql
-from ..postgres.v1.db_connection import  ddl as postgres_dml
+from ..postgres.v1.db_connection import  dql as postgres_dql
+from ..postgres.v1.db_connection import  dml as postgres_dml
 
 
 from ..mongo.v1.db_connection import connectsql as mongo_connectsql

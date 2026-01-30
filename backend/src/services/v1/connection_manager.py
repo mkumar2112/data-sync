@@ -243,7 +243,7 @@ class Database_Operation:
             table_metadata_list = []
             for table in table_list:
                 table_metadata_obj = table_operation_obj.get_table_metadata(table_name=table)
-                print(table_metadata_obj)
+                # print(table_metadata_obj)
                 table_metadata = {
                     'connection_id':db_instance.id,   # ✅ required FK
                     'name':table,                    # ✅ table name
@@ -283,7 +283,7 @@ class Database_Operation:
 
                         "data_type": column.get("data_type"),
                         "udt_name": column.get("udt_name"),
-                        "is_nullable": True if column.get("is_nullable") == "YES" else False,
+                        "is_nullable": True if column.get("is_nullable") in ["YES", True, 'true', 1] else False,
                         "is_primary_key": column.get("is_primary_key", False),
                         "is_unique": column.get("is_unique", False),
                         "default_value": column.get("default"),
@@ -381,6 +381,7 @@ class Database_Operation:
 
             return {'table_metadata_list': table_metadata_list}
         except Exception as e:
+            print('-----> ', e)
             return api_response(500, message = str(e))
         
 
@@ -476,6 +477,7 @@ class Database_Operation:
                 replica_table_instance = Replica_Table_crud.get(db=self.db, schema= None, original_table_id=table.id)     
                 for col in columns.get('items'):
                     replica_column = col.to_dict()
+                    print(replica_column)
                     for key in ['id', 'connection_id', 'table_id', 'foreign_key', 'metadata_json', 'created_at', 'updated_at']:
                         replica_column.pop(key, None)
                     replica_column['connection_id'] = replica_db_instance.id

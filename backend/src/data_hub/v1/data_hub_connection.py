@@ -108,7 +108,6 @@ class DBClientLoader:
             
             is_connect, msg = client.connectdb(db_name=kwarg.get('database'))
             if not is_connect:
-                
                 return False , msg
             return client, client
         except Exception as e:
@@ -188,9 +187,9 @@ class ddl_operation:
         self.client = client
         self.db_type = db_type
         self.db_name = db_name
-        self.get_ddl = self.get_ddl(db_type=db_type)
+        self.get_ddl = self.get_ddl_d(db_type=db_type)
     
-    def get_ddl(self, db_type):
+    def get_ddl_d(self, db_type):
         if db_type == "mysql":
             return mysql_ddl(self.client.conn, self.db_name)
         if db_type == "postgres":
@@ -226,15 +225,21 @@ class ddl_operation:
         except Exception as e:
             
             return 
+    
+    def truncate_table(self, table_name):
+        try:
+            return self.get_ddl.truncate_table(table_name=table_name)
+        except Exception as e:
+            return False , str(e)
 
 class dql_operation:
     def __init__(self, db_type, db_name, client):
         self.client = client
         self.db_type = db_type
         self.db_name = db_name
-        self.get_dql = self.get_dql(db_type=db_type)
+        self.get_dql = self.get_dql_c(db_type=db_type)
     
-    def get_dql(self, db_type):
+    def get_dql_c(self, db_type):
         if db_type == "mysql":
             return mysql_dql(self.client.conn, self.db_name)
         if db_type == "postgres":
@@ -248,6 +253,8 @@ class dql_operation:
             return make_json_serializable(self.get_dql.extract_data(table_name=table_name))
         except Exception as e:
             return False , str(e)
+    
+    
 
 
 
@@ -267,11 +274,20 @@ class dml_operation:
             return mongo_dml(self.client.conn, self.db_name)
         raise Exception("Invalid or unsupported DB type")
     
-    def load_data(self, table_name, df):
+    def load_data_from_dataframe(self, table_name, df):
         try:
+            
             return self.dml_opr.load_data(table_name=table_name, df=df)
         except Exception as e:
             return str(e)
+        
+    def load_data_from_dict(self, table_name, rows, columns):
+        try:
+            columns_list = [col.column_name for col in columns]
+            return self.dml_opr.load_data_from_dict(table_name=table_name, rows=rows, columns_list=columns_list)
+        except Exception as e:
+            return str(e)
+    
         
     # def get_all_data(self, table_name):
     #     try:

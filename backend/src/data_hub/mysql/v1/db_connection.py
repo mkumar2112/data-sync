@@ -3,6 +3,7 @@ import os
 from ....db.models.connection import DatabaseColumn, DatabaseConstraint
 import re
 from .utility import *
+import pandas as pd
 
 ENTRIES = int(os.getenv('DATA_ENTRIES',50))
 
@@ -220,7 +221,6 @@ class connectsql:
         except Exception as e:
             self.conn.rollback()
             return False, f"Commit failed: {e}"
-
 
 class tableoperation:
     def __init__(self, conn, db_name):
@@ -447,7 +447,6 @@ class tableoperation:
 
         except Exception as e:
             return {"error": str(e)}
-
 
 class db_helper:
     def __init__(self, db_name):
@@ -678,7 +677,6 @@ class db_helper:
             print(e)
             return ''    
 
-
 class ddl:
     def __init__(self, conn, db_name):
         self.conn = conn
@@ -814,6 +812,21 @@ class ddl:
         finally:
             cursor.close()
 
+    def truncate_table(self, table_name: str):
+        """
+        Truncate a MySQL table, removing all rows.
+        """
+        cursor = self.conn.cursor()
+        try:
+            query = f"TRUNCATE TABLE `{table_name}`;"
+            cursor.execute(query)
+            self.conn.commit()
+            return True, f"Table `{table_name}` truncated successfully"
+        except Exception as e:
+            self.conn.rollback()
+            return False, f"Error truncating table `{table_name}`: {e}"
+        finally:
+            cursor.close()
 
 
 class dcl:
@@ -834,36 +847,17 @@ class dql(dql_utility):
         except Exception as e:
             return False, str(e)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import pandas as pd
-
 class dml:
     def __init__(self, conn, db_name):
         self.conn = conn
         self.db_name = db_name.lower()
 
-    def load_data(self, table_name: str, df: pd.DataFrame):
+    def load_data_from_dataframe(self, table_name: str, df: pd.DataFrame):
         if df.empty:
             return
         
         use_sql = f"USE `{self.db_name}`;"
 
-        print(self.db_name)
         # Replace NaN with None (DB-safe)
         df = df.where(pd.notnull(df), None)
 
@@ -881,17 +875,43 @@ class dml:
 
         cursor = self.conn.cursor()
 
-        print(query, values)
         try:
             cursor.execute(use_sql)
             cursor.executemany(query, values)
             self.conn.commit()
         except Exception as e:
-            print(e)
             self.conn.rollback()
             raise e
         finally:
             cursor.close()
+
+
+    def load_data_from_dict(self, table_name: str, rows: list, columns_list: list):
+        if not rows:
+            return
+
+        # Quote column names safely with backticks
+        columns_sql = ", ".join(f"`{col}`" for col in columns_list)
+
+        # Create placeholders for values
+        placeholders = ", ".join(["%s"] * len(columns_list))
+
+        query = f'''
+            INSERT INTO `{table_name}`
+            ({columns_sql})
+            VALUES ({placeholders})
+        '''
+        
+        cursor = self.conn.cursor()
+        try:
+            cursor.executemany(query, rows)
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+
 
     def _placeholders(self, count: int):
         return "(" + ", ".join(["%s"] * count) + ")"

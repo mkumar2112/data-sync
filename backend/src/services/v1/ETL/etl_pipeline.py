@@ -69,13 +69,35 @@ class ETLService:
             replica_db_crud = CRUDBase(model=ReplicaDatabaseConnection)
             table_crud = CRUDBase(model=DatabaseTable)
             column_crud = CRUDBase(model=DatabaseColumn)
+            replica_table_crud = CRUDBase(model=ReplicaDatabaseTable)
+            replica_column_crud = CRUDBase(model=ReplicaDatabaseColumn)
 
             replica_db_instance = replica_db_crud.get(db=self.db, schema= None, original_connection_id=db_instance.id)
             tables =  table_crud.filter(
                 db=self.db, page=1, per_page="all",
                 connection_id=db_instance.id
             ).get("items", [])
-            
+            replica_tables =  replica_table_crud.filter(
+                db=self.db, page=1, per_page="all",
+                connection_id=replica_db_instance.id
+            ).get("items", [])
+            credentials = {}
+            if replica_db_instance.db_type in available_db_in_sql:
+                credentials.update( {
+                    "name": replica_db_instance.name,
+                    "host": replica_db_instance.host,
+                    "port": replica_db_instance.port,
+                    "username": replica_db_instance.username,
+                    "password": replica_db_instance.password,
+                    "database": replica_db_instance.database_name
+                })
+            elif replica_db_instance.db_type in available_db_in_nosql:
+                credentials.update({
+                    "name": replica_db_instance.name,
+                    "url": replica_db_instance.connection_uri,
+                })
+            replica_client, msg = DBClientLoader.get_client_db(db_type=replica_db_instance.db_type, **credentials )
+
 
             ExtractService_obj = ExtractService(dql_opr=self.dql_opr)
             flag, data = await ExtractService_obj.get_all_table_data(table_list=tables)
@@ -84,24 +106,23 @@ class ETLService:
                 return api_response(status_code=400, data=data)
             
             TransformService_obj = TransformService()
-            dml_opr = dml_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.database_name, client=client)
-            print('----------------', replica_db_instance.database_name)
+            dml_opr = dml_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.database_name, client=replica_client)
+            ddl_opr = ddl_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.database_name, client=replica_client)
+            # print('----------------', replica_db_instance.database_name)
             transformed_data = {}
             for table in tables:
-                columns = column_crud.filter(
-                    db=self.db, page=1, per_page="all",
-                    table_id=table.id
-                )
-                # print(columns.get('items'), data.get(table.name))
-                t_data = TransformService_obj.run(columns.get('items'), payload= data.get(table.name))
-                transformed_data[table.name] = t_data
-                # print(transformed_data)
-
-            
-                dml_opr.load_data(table_name=table.name, df=t_data)
-            
-
-
+                flag, msg = ddl_opr.truncate_table(table.name)
+                
+                if flag:
+                    columns = column_crud.filter(
+                        db=self.db, page=1, per_page="all",
+                        table_id=table.id, sort_by = 'id'
+                    )
+                    # print(columns.get('items'), data.get(table.name))
+                    # t_data = TransformService_obj.run(columns.get('items'), payload= data.get(table.name))
+                    # transformed_data[table.name] = t_data
+                    # print(transformed_data)
+                    dml_opr.load_data_from_dict(table_name=table.name, rows=data.get(table.name), columns=columns.get('items'))
             if not flag:
                 return api_response(status_code=400, message=data)
             return api_response(status_code=200, data=data, message='Successfuly fetched')

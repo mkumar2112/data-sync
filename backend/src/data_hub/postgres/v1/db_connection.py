@@ -1,6 +1,10 @@
 import psycopg2
 import os
 import re
+from .utility import *
+import pandas as pd
+import json
+from psycopg2.extras import execute_values
 
 
 ENTRIES = int(os.getenv('DATA_ENTRIES',50))
@@ -622,40 +626,6 @@ class db_helper:
         short = hashlib.md5(raw.encode()).hexdigest()[:8]
         return f"{table_name}_{ctype}_{short}".replace(' ', '').lower()
 
-    # def build_column_sql(self, col):
-    #     """
-    #     Convert DatabaseColumn metadata into PostgreSQL column SQL.
-    #     """
-    #     data_type = col.data_type.upper()
-
-    #     # SERIAL handling
-    #     if data_type == "INT" and col.is_auto_increment:
-    #         data_type = "SERIAL"
-    #     elif data_type == "BIGINT" and col.is_auto_increment:
-    #         data_type = "BIGSERIAL"
-
-    #     parts = [f'"{col.column_name}"', data_type]
-
-    #     # Length / precision
-    #     if col.length and data_type not in ("TEXT", "SERIAL", "BIGSERIAL"):
-    #         parts[-1] += f"({col.length})"
-    #     elif col.precision and col.scale:
-    #         parts[-1] += f"({col.precision},{col.scale})"
-
-    #     # NULL / NOT NULL
-    #     if not col.is_nullable:
-    #         parts.append("NOT NULL")
-
-    #     # DEFAULT
-    #     if col.default_value is not None:
-    #         default = col.default_value
-    #         if isinstance(default, str) and not default.upper().startswith("CURRENT"):
-    #             default = f"'{default}'"
-    #         parts.append(f"DEFAULT {default}")
-
-    #     return " ".join(parts)
-
-
     def extract_columns_from_definition(self, definition: str):
         match = re.search(r"\((.*?)\)", definition)
         if not match:
@@ -675,75 +645,6 @@ class db_helper:
         table = match.group(1)
         cols = [c.strip(' "') for c in match.group(2).split(",")]
         return table, cols
-
-    # def build_constraint_sql(self, table_name, constraint):
-    #     if constraint.columns:
-    #         cols_list = constraint.columns
-    #     elif constraint.metadata_json and constraint.metadata_json.get("definition"):
-    #         cols_list = self.extract_columns_from_definition(
-    #             constraint.metadata_json["definition"]
-    #         )
-    #     else:
-    #         cols_list = []
-    #     cname = self.generate_constraint_name(
-    #         table_name,
-    #         constraint.constraint_type,
-    #         cols_list
-    #     )
-
-
-
-    #     ctype = constraint.constraint_type.upper()
-
-    #     if not cols_list and ctype not in ("CHECK",):
-    #         return ""
-
-    #     cols = ", ".join(f'"{c}"' for c in cols_list)
-
-    #     # PRIMARY KEY
-    #     if ctype == "PRIMARY KEY":
-    #         return f"PRIMARY KEY ({cols})"
-
-    #     # UNIQUE
-    #     if ctype == "UNIQUE":
-    #         return f"CONSTRAINT {cname} UNIQUE ({cols})"
-
-    #     # FOREIGN KEY
-    #     if ctype == "FOREIGN KEY":
-    #         ref_table = constraint.referenced_table
-    #         ref_columns = constraint.referenced_columns or []
-
-    #         if (
-    #             (not ref_table or not ref_columns)
-    #             and constraint.metadata_json
-    #             and constraint.metadata_json.get("definition")
-    #         ):
-    #             ref_table, ref_columns = self.extract_fk_from_definition(
-    #                 constraint.metadata_json["definition"]
-    #             )
-
-    #         if not ref_table or not ref_columns:
-    #             return ""
-
-    #         ref_cols = ", ".join(f'"{c}"' for c in ref_columns)
-
-    #         sql = (
-    #             f"CONSTRAINT {cname} FOREIGN KEY ({cols}) "
-    #             f'REFERENCES "{ref_table}" ({ref_cols})'
-    #         )
-
-    #         if constraint.on_delete:
-    #             sql += f" ON DELETE {constraint.on_delete}"
-    #         if constraint.on_update:
-    #             sql += f" ON UPDATE {constraint.on_update}"
-
-    #         return sql
-
-    #     # CHECK
-    #     if ctype == "CHECK" and constraint.check_expression:
-    #         return f"CONSTRAINT {cname} CHECK ({constraint.check_expression})"
-
-    #     return ""
 
     def build_constraint_sql(self, table_name, constraint):
         """
@@ -1091,7 +992,7 @@ class ddl:
             return True, "Table columns created successfully"
 
         except Exception as e:
-            print(e)
+            print(e) 
             self.conn.rollback()
             return False, f"Error creating table columns: {e}"
 
@@ -1152,14 +1053,96 @@ class ddl:
         finally:
             cursor.close()
 
+    def truncate_table(self, table_name: str):
+        """
+        Truncate a PostgreSQL table, reset sequences, and handle foreign keys.
+        """
+        cursor = self.conn.cursor()
+        try:
+            query = f'TRUNCATE TABLE "{table_name}" RESTART IDENTITY CASCADE;'
+            cursor.execute(query)
+            self.conn.commit()
+            return True, f"PostgreSQL table `{table_name}` truncated successfully"
+        except Exception as e:
+            self.conn.rollback()
+            return False, f"Error truncating PostgreSQL table `{table_name}`: {e}"
+        finally:
+            cursor.close()
 
 
-class dml():
-    def __init__(self):
-        pass
 
-    def load_data(self, table_name: str, df):
-        pass
 
+class dql(dql_utility):
+    def __init__(self, conn, db_name=None):
+        self.conn = conn
+        self.db_name = db_name
+
+    def extract_data(self, table_name, **kwargs):
+        try:
+            query = f'SELECT * FROM {table_name}'
+            data = self.run_query(query=query)
+            return True, data
+        except Exception as e:
+            return False, str(e)
+
+
+
+
+class dml:
+    def __init__(self, conn, db_name):
+        self.conn = conn
+
+    def load_data_from_dataframe(self, table_name: str, df: pd.DataFrame):
+        if df.empty:
+            return
+
+        # Clean NaN → None
+        df = df.where(pd.notnull(df), None)
+
+        # Convert dict → JSON
+        for col in df.columns:
+            if df[col].apply(lambda x: isinstance(x, dict)).any():
+                df[col] = df[col].apply(lambda x: json.dumps(x) if x else None)
+
+        columns = ['"{}"'.format(c) for c in df.columns]
+        values = [tuple(row) for row in df.itertuples(index=False)]
+
+        query = f"""
+            INSERT INTO {table_name}
+            ({", ".join(columns)})
+            VALUES %s
+        """
+
+        cursor = self.conn.cursor()
+        try:
+            execute_values(cursor, query, values)
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+
+    def load_data_from_dict(self, table_name: str, rows: list, columns_list: list):
+        if not rows:
+            return
+
+        # Quote column names safely
+        columns_sql = ", ".join(f'"{col}"' for col in columns_list)
+
+        query = f'''
+            INSERT INTO "{table_name}"  
+            ({columns_sql})
+            VALUES %s
+        '''
+        cursor = self.conn.cursor()
+        try:
+            execute_values(cursor, query, rows)
+            self.conn.commit()
+        except Exception as e:
+            self.conn.rollback()
+            raise e
+        finally:
+            cursor.close()
 
     
