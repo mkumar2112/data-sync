@@ -16,7 +16,7 @@ from ..mongo.v1.db_connection import connectsql as mongo_connectsql
 from ..mongo.v1.db_connection import tableoperation as  mongo_tableoperation
 from ..mongo.v1.db_connection import ddl as mongo_ddl
 from ..mongo.v1.db_connection import dql as mongo_dql
-from ..mongo.v1.db_connection import ddl as mongo_dml
+from ..mongo.v1.db_connection import dml as mongo_dml
 
 
 from ...core.config import available_db_in_nosql, available_db_in_sql

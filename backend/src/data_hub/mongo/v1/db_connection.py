@@ -3,7 +3,7 @@ import os
 from bson import ObjectId, Decimal128, Timestamp
 from datetime import datetime
 
-
+from .utility import dql_utility
 
 ENTRIES = int(os.getenv('DATA_ENTRIES',50))
 
@@ -12,12 +12,14 @@ def bson_to_json(data):
         return {k: bson_to_json(v) for k, v in data.items()}
     elif isinstance(data, list):
         return [bson_to_json(i) for i in data]
+    elif isinstance(data, tuple):
+        return tuple(bson_to_json(i) for i in data)
     elif isinstance(data, ObjectId):
         return str(data)
     elif isinstance(data, Decimal128):
         return float(data.to_decimal())
     elif isinstance(data, Timestamp):
-        return str(data)            # or convert to ISO timestamp
+        return str(data)
     elif isinstance(data, datetime):
         return data.isoformat()
     else:
@@ -336,6 +338,7 @@ class connectsql:
 
             self.client = MongoClient(url)
             self.client.server_info()  # Test connection
+            self.connectdb(database)
             return True
         except Exception:
             return False
@@ -356,9 +359,12 @@ class connectsql:
     # ------------------ SHOW ALL COLLECTIONS ------------------
     def show_tables(self):
         try:
-            return self.conn.list_collection_names()
-        except Exception:
+            if self.db is None:
+                raise ValueError("Database is not selected. Call connectdb first.")
+            return self.db.list_collection_names()
+        except Exception as e:
             return False
+
 
     # ------------------ SERVER INFO ------------------
     def get_mongo_version(self):
@@ -453,7 +459,7 @@ class connectsql:
             return False, f"Error creating database {db_name}: {e}"
 
     # ------------------ DELETE DB ------------------
-    def deletedb(self, db_type, db_name):
+    def deletedb(self, db_name):
         try:
             if not self.client:
                 raise ValueError("Database connection not established.")
@@ -480,7 +486,7 @@ class connectsql:
 
 class tableoperation:
     def __init__(self, conn, db_name):
-        self.client = conn                  # this is MongoClient
+        self.conn = conn                  # this is MongoClient
         self.db_name = db_name
 
     def get_db(self):
@@ -598,73 +604,286 @@ class tableoperation:
         except Exception as e:
             return {"error": str(e)}
 
+import re
+from bson import ObjectId
+
+class db_helper:
+    def __init__(self, db_name):
+        self.db_name = db_name
+
+    def build_column_schema(self, col):
+        """
+        Build MongoDB-native JSON schema from your `col` object
+        col.data_type must be Mongo-native:
+            string, int, double, bool, object, array,
+            objectId, date, binary, long, decimal, regex
+        """
+
+        MONGO_TYPES = {
+            "STRING": "string",
+            "INT": "int",
+            "INTEGER": "int",
+            "LONG": "long",
+            "DOUBLE": "double",
+            "DECIMAL": "decimal",
+            "BOOL": "bool",
+            "BOOLEAN": "bool",
+            "OBJECT": "object",
+            "ARRAY": "array",
+            "OBJECTID": "objectId",
+            "DATE": "date",
+            "BINARY": "binData",
+            "REGEX": "regex",
+        }
+
+        dt = (col.data_type or "").upper()
+        bson_type = MONGO_TYPES.get(dt, "string")  # default string
+
+        schema = {"bsonType": bson_type}
+
+        # nullable
+        if not col.is_nullable:
+            schema["nullable"] = False
+
+        # default value
+        if col.default_value is not None:
+            schema["default"] = col.default_value
+
+        # enum values
+        if col.enum_values:
+            schema["enum"] = col.enum_values
+
+        return schema
+
+    def build_constraint_schema(self, constraint):
+        """
+        Convert constraints for Mongo usage.
+        Only UNIQUE → index
+        CHECK → json schema
+        FOREIGN KEY → no native FK, skip
+        """
+
+        ctype = constraint.constraint_type.upper()
+
+        if ctype == "UNIQUE":
+            return {
+                "type": "unique",
+                "fields": constraint.columns
+            }
+
+        if ctype == "CHECK":
+            return {
+                "type": "check",
+                "expression": constraint.check_expression
+            }
+
+        # MongoDB does not support FK, skip
+        if ctype == "FOREIGN KEY":
+            return None
+
+        # PK also becomes unique index
+        if ctype == "PRIMARY KEY":
+            return {
+                "type": "unique",
+                "fields": constraint.columns
+            }
+
+        return None
+
+
+
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 class ddl:
-    def __init__(self, conn, db_name):
+    def __init__(self, conn , db_name):
         self.conn = conn
         self.db_name = db_name
-        self.db_helper = db_helper
+        self.db = conn[db_name]
+        self.db_helper = db_helper(db_name)
 
-    def create_table_from_metadata(self, table_name, columns, constraints):
+    def create_database(self, db_name, **kwargs):
         """
-        Create MySQL table using DatabaseColumn + DatabaseConstraint metadata.
+        Ensure MongoDB database is created.
+        Inserts a dummy doc in a temp collection to force DB creation.
         """
-        cursor = self.conn.cursor()
 
         try:
-            table_sql = [f"`{table_name}` ("]
-            definitions = []
+            db = self.conn  # get database handle
+            temp_col_name = "__temp_init__"
+            temp_col = db[temp_col_name]
 
-            # Columns
-            for col in columns:
-                definitions.append(self.db_helper.build_column_sql(col))
+            # insert a dummy document
+            result = temp_col.insert_one({"_init": True})
 
-            # Constraints (ordered)
-            for cons in sorted(constraints, key=lambda x: x.constraint_order or 0):
-                if cons.is_enabled:
-                    cons_sql = self.db_helper.build_constraint_sql(cons)
-                    if cons_sql:
-                        definitions.append(cons_sql)
+            # delete the dummy document
+            temp_col.delete_one({"_id": result.inserted_id})
 
-            table_sql.append(",\n  ".join(definitions))
-            table_sql.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;")
-
-            final_sql = "\n".join(table_sql)
-
-            print(final_sql)
-            # cursor.execute(final_sql)
-            # self.conn.commit()
-
-            return True, "Table created successfully"
+            return True, f"MongoDB database `{db_name}` initialized successfully"
 
         except Exception as e:
-            self.conn.rollback()
-            return False, f"Error creating table: {e}"
+            return False, str(e)
 
-        finally:
-            cursor.close()
+    def create_table(self, table_name, columns):
+        """
+        Create MongoDB collection with JSON Schema validation.
+        columns: list of ReplicaDatabaseColumn (Mongo-native types)
+        """
+        try:
+            properties = {}
+            required = []
+
+            for col in columns:
+                col_schema = self.db_helper.build_column_schema(col)
+                properties[col.column_name] = col_schema
+
+                if not col.is_nullable:
+                    required.append(col.column_name)
+
+            json_schema = {
+                "bsonType": "object",
+                "properties": properties
+            }
+
+            if required:
+                json_schema["required"] = required
+
+            self.db.create_collection(
+                table_name,
+                validator={"$jsonSchema": json_schema}
+            )
+
+            return True, f"Collection `{table_name}` created successfully"
+
+        except Exception as e:
+            return False, f"Error creating collection: {e}"
+
+    def add_table_constraints(self, table_name, constraints):
+        """
+        Supports:
+        - UNIQUE -> create unique index
+        - CHECK  -> convert to JSON schema
+        """
+        try:
+            collection = self.db[table_name]
+
+            for cons in constraints:
+                if not cons.is_enabled:
+                    continue
+
+                schema = self.db_helper.build_constraint_schema(cons)
+                if not schema:
+                    continue
+
+                if schema["type"] == "unique":
+                    index_fields = [(col, 1) for col in schema["fields"]]
+                    collection.create_index(index_fields, unique=True)
+
+                elif schema["type"] == "check":
+                    # Add validator update logic
+                    pass  # Optional, can implement if needed
+
+            return True, "All Mongo constraints added"
+
+        except Exception as e:
+            return False, f"Error: {e}"
+
+    def truncate_table(self, table_name):
+        """Delete all documents"""
+        try:
+            col = self.db[table_name]
+            result = col.delete_many({})
+            return True, f"Collection `{table_name}` cleared"
+        except Exception as e:
+            return False, f"Error clearing collection: {e}"
 
 
-
-class dql():
+class dql(dql_utility):
     def __init__(self, conn, db_name=None):
-        self.conn = conn
-        self.db_name = db_name
+        super().__init__(conn, db_name)
 
     def extract_data(self, table_name, **kwargs):
         try:
-            query = f'SELECT * FROM {table_name}'
-            data = self.run_query(query=query)
-            print(data)
+            """
+            MongoDB equivalent of SELECT * FROM table_name
+            Returns data like MySQL fetchall() -> list of tuples
+            """
+            filter_dict = kwargs.get("filter_dict", {})
+            db = self.get_db()
+            col = db[table_name]
+
+            # Fetch all documents
+            docs = list(col.find(filter_dict))
+
+            if not docs:
+                return []
+
+            # Determine columns from first document (order matters!)
+            columns = list(docs[0].keys())
+
+            # Convert each document to a row (tuple)
+            rows = []
+            for doc in docs:
+                row = []
+                for col_name in columns:
+                    row.append(doc.get(col_name))
+                rows.append(tuple(row))  # tuple like MySQL row
+
+            return True, rows
+        except Exception as e:
+            return False , str(e)
+
+class dml:
+    def __init__(self, conn, db_name):
+        self.conn = conn
+        self.db_name = db_name
+        
+
+    def get_db(self):
+        return self.conn[self.db_name]
+
+    def load_data_from_dataframe(self, table_name: str, df):
+        """
+        Load pandas dataframe into MongoDB collection
+        """
+        if df.empty:
+            return
+
+        # Convert NaN to None
+        df = df.where(pd.notnull(df), None)
+        records = df.to_dict(orient="records")
+
+        db = self.get_db()
+        col = db[table_name]
+        if records:
+            col.insert_many(records)
+
+    def load_data_from_dict(self, table_name: str, rows: list, columns_list: list = None):
+        try:
+            if not rows:
+                return
+
+            db = self.get_db()
+
+            col = db[table_name]
+            print(col)
+            # If rows are tuples, convert to dict using columns_list
+            if rows and isinstance(rows[0], tuple):
+                if not columns_list:
+                    raise ValueError("columns_list required for tuple rows")
+                rows = [dict(zip(columns_list, r)) for r in rows]
+            col.insert_many(rows)
         except Exception as e:
             print(e)
 
+    def truncate_table(self, table_name: str):
+        try:
+            db = self.get_db()
+            col = db[table_name]
+            col.delete_many({})  # Remove all documents
+        except Exception as e:
+            print(e)
 
-class dml():
-    def __init__(self):
-        pass
-
-    def load_data(self, table_name: str, df):
-        pass
-
-    
+    def drop_table(self, table_name: str):
+        db = self.get_db()
+        db.drop_collection(table_name)

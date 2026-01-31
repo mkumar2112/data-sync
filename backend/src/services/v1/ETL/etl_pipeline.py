@@ -45,7 +45,7 @@ class ETLService:
                 })
             client, msg = DBClientLoader.get_client_db(db_type=db_instance.db_type, **credentials )
 
-            dql_operation_obj = dql_operation(db_type=db_instance.db_type, db_name=db_instance.name, client=client)
+            dql_operation_obj = dql_operation(db_type=db_instance.db_type, db_name=db_instance.database_name, client=client)
 
             if not dql_operation_obj:
                 return None, api_response(400, message = 'DB connection unable to connect')
@@ -93,22 +93,19 @@ class ETLService:
                 })
             elif replica_db_instance.db_type in available_db_in_nosql:
                 credentials.update({
-                    "name": replica_db_instance.name,
+                    "database": replica_db_instance.database_name,
                     "url": replica_db_instance.connection_uri,
                 })
             replica_client, msg = DBClientLoader.get_client_db(db_type=replica_db_instance.db_type, **credentials )
 
-
             ExtractService_obj = ExtractService(dql_opr=self.dql_opr)
             flag, data = await ExtractService_obj.get_all_table_data(table_list=tables)
-
             if not flag:
                 return api_response(status_code=400, data=data)
             
             TransformService_obj = TransformService()
             dml_opr = dml_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.database_name, client=replica_client)
             ddl_opr = ddl_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.database_name, client=replica_client)
-            # print('----------------', replica_db_instance.database_name)
             transformed_data = {}
             for table in tables:
                 flag, msg = ddl_opr.truncate_table(table.name)
@@ -122,11 +119,12 @@ class ETLService:
                     # t_data = TransformService_obj.run(columns.get('items'), payload= data.get(table.name))
                     # transformed_data[table.name] = t_data
                     # print(transformed_data)
-                    dml_opr.load_data_from_dict(table_name=table.name, rows=data.get(table.name), columns=columns.get('items'))
+                    dml_opr.load_data_from_dict(table_name=table.name, columns=columns.get('items'), rows=data.get(table.name))
             if not flag:
                 return api_response(status_code=400, message=data)
             return api_response(status_code=200, data=data, message='Successfuly fetched')
         except Exception as e:
+            print('---->', e)
             return api_response(status_code=500, message=str(e))
         
     

@@ -1,5 +1,5 @@
 from .imports_files import *
-
+from ..mongo.v1.db_connection import bson_to_json
 
 class DBClientLoader:
 
@@ -195,7 +195,7 @@ class ddl_operation:
         if db_type == "postgres":
             return postgres_ddl(self.client.conn, self.db_name)
         if db_type == "mongo":
-            return mongo_ddl(self.client.conn, self.db_name)
+            return mongo_ddl(self.client.client, self.db_name)
         raise Exception("Invalid or unsupported DB type")
     
     def create_database(self, db_name):
@@ -250,7 +250,14 @@ class dql_operation:
     
     def get_all_data(self, table_name):
         try:
-            return make_json_serializable(self.get_dql.extract_data(table_name=table_name))
+            flag, data = self.get_dql.extract_data(table_name=table_name)
+            if self.db_type in available_db_in_sql:
+                result = make_json_serializable(data)
+            elif self.db_type in available_db_in_nosql:
+                result = bson_to_json(data) 
+            else:
+                result = data
+            return flag, result
         except Exception as e:
             return False , str(e)
     

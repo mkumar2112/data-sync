@@ -381,7 +381,6 @@ class Database_Operation:
 
             return {'table_metadata_list': table_metadata_list}
         except Exception as e:
-            print('-----> ', e)
             return api_response(500, message = str(e))
         
 
@@ -436,6 +435,8 @@ class Database_Operation:
                 replica_db_connection.update({'original_connection_id': db_instance.id ,'name': f'{db_instance.db_type}_{db_instance.database_name}_{db_instance.id}', 'db_type': db_instance.db_type,  'host': 'localhost', 'port': 3306, 'username': 'root', 'password': 'monu', 'database_name': f'{db_instance.database_name}_{db_instance.username}_{db_instance.id}'})
             elif db_instance.db_type == 'postgres':
                 replica_db_connection.update({'original_connection_id': db_instance.id ,'name': f'{db_instance.db_type}_{db_instance.database_name}_{db_instance.id}', 'db_type': db_instance.db_type,  'host': 'localhost', 'port': 5432, 'username': 'monuk', 'password': 'monu', 'database_name': f'{db_instance.database_name}_{db_instance.username}_{db_instance.id}'})
+            elif db_instance.db_type == 'mongo':
+                replica_db_connection.update({'original_connection_id': db_instance.id ,'name': f'{db_instance.db_type}_{db_instance.database_name}_{db_instance.id}', 'db_type': db_instance.db_type,  'connection_uri': 'mongodb://localhost:27017/', 'database_name': f'{db_instance.database_name}_{db_instance.username}_{db_instance.id}'})
 
             replica_db_instance = Replica_DatabaseConnection.get(db=self.db, schema= None, original_connection_id=db_instance.id)
             if not replica_db_instance:
@@ -444,22 +445,28 @@ class Database_Operation:
                 return {'message': 'Replica already created...'}
 
                 replica_db_instance = Replica_DatabaseConnection.update(db=self.db,db_obj=replica_db_instance, obj_in=replica_db_connection)
-            replica_credentials = {
-                "host": replica_db_instance.host,
-                "port": replica_db_instance.port,
-                "username": replica_db_instance.username,
-                "password": replica_db_instance.password,
-            }
+            if replica_db_instance.db_type in available_db_in_sql:
+                replica_credentials = {
+                    "host": replica_db_instance.host,
+                    "port": replica_db_instance.port,
+                    "username": replica_db_instance.username,
+                    "password": replica_db_instance.password,
+                }
+            elif replica_db_instance.db_type in available_db_in_nosql:
+                replica_credentials = {
+                    "url": replica_db_instance.connection_uri,
+                }
             replica_client, msg = DBClientLoader.setup_connection(db_type=db_instance.db_type, **replica_credentials )
-            ddl_operation_obj = ddl_operation(db_type=db_instance.db_type, db_name=db_instance.name, client=replica_client)
+            ddl_operation_obj = ddl_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.database_name, client=replica_client)
             flag, msg = ddl_operation_obj.create_database(db_name=replica_db_instance.database_name)
 
+            if replica_db_instance.db_type not in available_db_in_sql:
+                return
             # print(flag, '---------------')
             if flag:
                 replica_credentials['database'] = replica_db_instance.database_name
                 replica_client, msg = DBClientLoader.setup_connection(db_type=replica_db_instance.db_type, **replica_credentials )
                 ddl_operation_obj = ddl_operation(db_type=replica_db_instance.db_type, db_name=replica_db_instance.name, client=replica_client)
-
             tables = Table_crud.filter(db=self.db, page=1, per_page='all', connection_id= db_instance.id )
             for table in tables.get('items'):
                 replica_table = table.to_dict()
@@ -477,7 +484,6 @@ class Database_Operation:
                 replica_table_instance = Replica_Table_crud.get(db=self.db, schema= None, original_table_id=table.id)     
                 for col in columns.get('items'):
                     replica_column = col.to_dict()
-                    print(replica_column)
                     for key in ['id', 'connection_id', 'table_id', 'foreign_key', 'metadata_json', 'created_at', 'updated_at']:
                         replica_column.pop(key, None)
                     replica_column['connection_id'] = replica_db_instance.id
@@ -490,7 +496,9 @@ class Database_Operation:
                         replica_column_instance = Replica_Column_crud.create(db=self.db, obj_in=replica_column)
                 replica_columns = Replica_Column_crud.filter(db=self.db, page=1, per_page='all', table_id=replica_table_instance.id)
                 flag, msg = ddl_operation_obj.create_table(table_name=replica_table_instance.name, columns=replica_columns.get('items'))
-
+                print('--------------------------------------------->', flag, msg)
+                if not flag:
+                    break
             for table in tables.get('items'):
                 constraints = Constraint_crud.filter(db=self.db, page=1, per_page='all', table_id=table.id)
                 replica_table_instance = Replica_Table_crud.get(db=self.db, schema= None, original_table_id=table.id)     
@@ -816,7 +824,7 @@ class DQL_Operation:
                 })
             client, msg = DBClientLoader.get_client_db(db_type=db_instance.db_type, **credentials )
 
-            dql_operation_obj = dql_operation(db_type=db_instance.db_type, db_name=db_instance.name, client=client)
+            dql_operation_obj = dql_operation(db_type=db_instance.db_type, db_name=db_instance.database_name, client=client)
 
             if not dql_operation_obj:
                 return None, api_response(400, message = 'DB connection unable to connect')

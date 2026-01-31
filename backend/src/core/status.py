@@ -171,7 +171,7 @@ class DBStatus:
 
 
 
-def api_response(status_code: int, data=None, message=None):
+def api_response(status_code: int, data=None, message=None, **kwargs):
         status_obj = APIStatus.get(status_code).to_dict()
 
         if message:
@@ -182,5 +182,6 @@ def api_response(status_code: int, data=None, message=None):
 
         return JSONResponse(
             status_code=status_code,
-            content=status_obj
+            content=status_obj,
+            **kwargs
         )
