@@ -461,7 +461,7 @@ class Database_Operation:
             flag, msg = ddl_operation_obj.create_database(db_name=replica_db_instance.database_name)
 
             if replica_db_instance.db_type not in available_db_in_sql:
-                return
+                return {'message': 'DB Replica has been created....'}
             # print(flag, '---------------')
             if flag:
                 replica_credentials['database'] = replica_db_instance.database_name
